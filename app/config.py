@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # --- agent engine ---
     max_agent_iterations: int = 8
     context_token_budget: int = 12_000
+    max_output_tokens: int = 1024
     retrieval_top_k: int = 5
 
     # --- RAG chunking ---
