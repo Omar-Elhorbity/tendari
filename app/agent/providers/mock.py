@@ -21,7 +21,10 @@ from app.agent.providers.base import EmitFn, LLMResponse, ToolCall, Usage
 from app.config import settings
 
 _ORDER_NUMBER_RE = re.compile(r"#?\b(\d{3,})\b")
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _ORDER_HINTS = ("order", "where", "track", "shipping", "delivery", "package")
+_ESCALATE_HINTS = ("escalate", "human", "real person", "agent", "manager", "supervisor", "speak to someone")
+_TICKET_HINTS = ("ticket", "file a", "open a complaint", "log a", "raise a")
 
 
 def _estimate_tokens(text: str) -> int:
@@ -47,6 +50,18 @@ class MockProvider:
         return ""
 
     @staticmethod
+    def _current_turn(messages: list[dict]) -> list[dict]:
+        """Messages after the latest user message — i.e. THIS turn's activity.
+
+        Without this the mock would treat a prior turn's tool result as the
+        current one and never call a tool again in a multi-turn conversation.
+        """
+        last_user = max(
+            (i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1
+        )
+        return messages[last_user + 1 :]
+
+    @staticmethod
     def _tool_payloads(messages: list[dict]) -> list[dict]:
         payloads: list[dict] = []
         for m in messages:
@@ -62,19 +77,52 @@ class MockProvider:
 
     def _choose_first_tool(self, user_text: str, tool_names: set[str]) -> ToolCall | None:
         lowered = user_text.lower()
-        match = _ORDER_NUMBER_RE.search(user_text)
+
+        if "escalate_to_human" in tool_names and any(h in lowered for h in _ESCALATE_HINTS):
+            return ToolCall("mock_escalate", "escalate_to_human", {"reason": user_text[:300]})
+
+        if "create_ticket" in tool_names and any(h in lowered for h in _TICKET_HINTS):
+            subject = user_text.strip()[:60] or "Support request"
+            return ToolCall(
+                "mock_ticket", "create_ticket",
+                {"subject": subject, "body": user_text, "priority": "normal"},
+            )
+
+        email_match = _EMAIL_RE.search(user_text)
+        if "send_email" in tool_names and "email" in lowered and email_match:
+            return ToolCall(
+                "mock_email", "send_email",
+                {"to": email_match.group(0), "subject": "Following up on your request", "body": user_text},
+            )
+
+        order_match = _ORDER_NUMBER_RE.search(user_text)
         if (
             "lookup_order" in tool_names
-            and match
+            and order_match
             and any(hint in lowered for hint in _ORDER_HINTS)
         ):
-            return ToolCall("mock_lookup_order", "lookup_order", {"order_number": match.group(1)})
+            return ToolCall("mock_lookup_order", "lookup_order", {"order_number": order_match.group(1)})
+
         if "search_help_docs" in tool_names:
             return ToolCall("mock_search", "search_help_docs", {"query": user_text})
         return None
 
     def _compose_answer(self, messages: list[dict]) -> str:
         for data in self._tool_payloads(messages):
+            if data.get("ticket_id"):
+                return (
+                    f"I've opened ticket {data['ticket_id']} ({data.get('priority', 'normal')} "
+                    "priority). Our team will follow up with you."
+                )
+            if data.get("escalated"):
+                return "I've escalated this to a human teammate who will reach out shortly."
+            if "delivery" in data:
+                msg = {
+                    "sent": "I've sent that email.",
+                    "logged": "I've queued that email (no email provider is configured, so it was logged).",
+                    "skipped_duplicate": "That email was already sent, so I didn't send a duplicate.",
+                }
+                return msg.get(data["delivery"], "Email handled.")
             if data.get("orders"):
                 return self._order_answer(data["orders"][0])
             if data.get("results"):
@@ -107,9 +155,10 @@ class MockProvider:
         emit: EmitFn | None = None,
     ) -> LLMResponse:
         tool_names = {t["name"] for t in tools}
-        has_tool_results = any(m.get("role") == "tool" for m in messages)
+        current_turn = self._current_turn(messages)
+        has_tool_results = any(m.get("role") == "tool" for m in current_turn)
 
-        # First turn: route to the most relevant tool.
+        # If we haven't called a tool THIS turn yet, route to the best one.
         if not has_tool_results:
             call = self._choose_first_tool(self._latest_user_text(messages), tool_names)
             if call is not None:
@@ -119,8 +168,8 @@ class MockProvider:
                     usage=self._usage(system, messages, f"[{call.name}]"),
                 )
 
-        # Otherwise answer from whatever tool results we have.
-        answer = self._compose_answer(messages)
+        # Otherwise answer from THIS turn's tool results.
+        answer = self._compose_answer(current_turn)
         if stream and emit is not None:
             for word in answer.split(" "):
                 await emit("token", {"text": word + " "})
