@@ -14,6 +14,7 @@ from app.tools.email import SEND_EMAIL
 from app.tools.escalate import ESCALATE_TO_HUMAN
 from app.tools.help_docs import SEARCH_HELP_DOCS
 from app.tools.orders import LOOKUP_ORDER
+from app.tools.refunds import INITIATE_REFUND
 from app.tools.tickets import CREATE_TICKET
 
 
@@ -24,6 +25,7 @@ def build_registry() -> ToolRegistry:
     registry.register(CREATE_TICKET)
     registry.register(SEND_EMAIL)
     registry.register(ESCALATE_TO_HUMAN)
+    registry.register(INITIATE_REFUND)
     return registry
 
 

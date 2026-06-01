@@ -25,6 +25,7 @@ _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _ORDER_HINTS = ("order", "where", "track", "shipping", "delivery", "package")
 _ESCALATE_HINTS = ("escalate", "human", "real person", "agent", "manager", "supervisor", "speak to someone")
 _TICKET_HINTS = ("ticket", "file a", "open a complaint", "log a", "raise a")
+_REFUND_HINTS = ("refund", "money back", "return", "damaged", "broken", "defective", "reimburse")
 
 
 def _estimate_tokens(text: str) -> int:
@@ -88,6 +89,17 @@ class MockProvider:
                 {"subject": subject, "body": user_text, "priority": "normal"},
             )
 
+        order_match = _ORDER_NUMBER_RE.search(user_text)
+        if (
+            "initiate_refund" in tool_names
+            and order_match
+            and any(h in lowered for h in _REFUND_HINTS)
+        ):
+            return ToolCall(
+                "mock_refund", "initiate_refund",
+                {"order_number": order_match.group(1), "reason": user_text[:300]},
+            )
+
         email_match = _EMAIL_RE.search(user_text)
         if "send_email" in tool_names and "email" in lowered and email_match:
             return ToolCall(
@@ -95,7 +107,6 @@ class MockProvider:
                 {"to": email_match.group(0), "subject": "Following up on your request", "body": user_text},
             )
 
-        order_match = _ORDER_NUMBER_RE.search(user_text)
         if (
             "lookup_order" in tool_names
             and order_match
@@ -109,6 +120,12 @@ class MockProvider:
 
     def _compose_answer(self, messages: list[dict]) -> str:
         for data in self._tool_payloads(messages):
+            if data.get("status") == "pending_approval" and data.get("action_id"):
+                return (
+                    f"I've submitted a refund request for review (reference "
+                    f"{data['action_id']}). It hasn't been processed yet — a teammate "
+                    "will review and approve it."
+                )
             if data.get("ticket_id"):
                 return (
                     f"I've opened ticket {data['ticket_id']} ({data.get('priority', 'normal')} "

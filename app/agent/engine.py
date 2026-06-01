@@ -273,7 +273,12 @@ async def run_agent(
         _history_to_messages(history), settings.context_token_budget
     )
 
-    ctx = ToolContext(workspace=workspace, conversation=conversation, session_factory=session_factory)
+    ctx = ToolContext(
+        workspace=workspace,
+        conversation=conversation,
+        session_factory=session_factory,
+        emit=emit,  # lets vertical tools emit domain events (e.g. approval_required)
+    )
 
     tool_summary: list[dict[str, str]] = []
     prompt_tokens = completion_tokens = 0

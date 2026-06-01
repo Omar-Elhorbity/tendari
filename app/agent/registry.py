@@ -23,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 if TYPE_CHECKING:  # avoid importing models at engine import time
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
+    from app.agent.providers.base import EmitFn
     from app.models import Conversation, Workspace
 
 
@@ -42,6 +43,9 @@ class ToolContext:
     workspace: "Workspace"
     conversation: "Conversation"
     session_factory: "async_sessionmaker"
+    # Optional SSE emitter so vertical tools can emit domain events (e.g.
+    # approval_required) without the engine knowing about them. None when not streaming.
+    emit: "EmitFn | None" = None
 
 
 Handler = Callable[[BaseModel, ToolContext], Awaitable[dict[str, Any]]]
