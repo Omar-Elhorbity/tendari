@@ -13,14 +13,15 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from app.auth import CurrentWorkspace, DbSession
+from app.config import settings
 from app.models import Document
-from app.rag.ingest import ingest_document_task
+from app.rag.ingest import _run_ingest, ingest_document_task
 from app.rag.loaders import IngestError, parse_pdf
 from app.schemas.documents import (
     DocumentAccepted,
@@ -152,7 +153,10 @@ async def _parse_multipart(request: Request) -> _ParsedUpload:
     summary="Upload/create a document for ingestion",
 )
 async def create_document(
-    request: Request, workspace: CurrentWorkspace, session: DbSession
+    request: Request,
+    workspace: CurrentWorkspace,
+    session: DbSession,
+    background_tasks: BackgroundTasks,
 ) -> DocumentAccepted:
     # Early reject of oversized bodies before buffering the upload.
     declared_len = request.headers.get("content-length")
@@ -179,8 +183,21 @@ async def create_document(
     )
     session.add(document)
     await session.flush()
-    # Commit before enqueueing so the worker can always see the row.
+    # Commit before dispatching so the ingester can always see the row.
     await session.commit()
+
+    # Worker-less mode (e.g. Render free tier): run ingestion in-process after the
+    # response, reusing the same async core the Celery worker wraps. _run_ingest
+    # opens its own engine/session and records failures on the document itself.
+    if settings.inline_ingestion:
+        background_tasks.add_task(
+            _run_ingest,
+            document.id,
+            parsed.raw_text,
+            parsed.source_type,
+            parsed.source_ref,
+        )
+        return DocumentAccepted(id=document.id, status=document.status)
 
     try:
         ingest_document_task.delay(

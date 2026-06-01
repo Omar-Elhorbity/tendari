@@ -1,0 +1,75 @@
+# Render blueprint — FREE-TIER variant of the Tendari stack.
+#
+# Differences from render.yaml (the paid/production blueprint):
+#   * No Celery worker. Background workers are never free on Render, so document
+#     ingestion runs IN-PROCESS via INLINE_INGESTION=true (FastAPI background
+#     task reusing the same async ingest core the worker would have called).
+#   * No preDeployCommand (paid-only). Migrations + seed run in the start command
+#     instead. There's a single free web instance, so there's no replica race.
+#   * Every service is on `plan: free`.
+#
+# Render → New → Blueprint → pick this repo → choose render-free.yaml. Then set
+# the secret env vars (sync: false) in the dashboard.
+#
+# Free-tier caveats to expect:
+#   * The web service SPINS DOWN after ~15 min idle; the next request cold-starts
+#     (re-runs migrate+seed, both idempotent) and is slow.
+#   * The free Postgres database is DELETED ~30 days after creation.
+#   * The free key-value store is small (25 MB) and non-persistent — fine here,
+#     it only holds best-effort, TTL'd email-idempotency keys.
+
+services:
+  - type: web
+    name: tendari-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # No preDeployCommand on free tier — fold migrate + seed into the start
+    # command. Both are idempotent, so re-running on every cold start is safe.
+    dockerCommand: "alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /healthz
+    envVars:
+      # Run ingestion in-process — there is no worker service on this blueprint.
+      - key: INLINE_INGESTION
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tendari-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: tendari-redis
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: CHAT_MODEL
+        value: claude-haiku-4-5
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: EMBEDDING_DIM
+        value: "1536"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SEED_API_KEY
+        sync: false
+      - key: SEED_WORKSPACE_NAME
+        value: Acme Outdoors
+
+  - type: keyvalue
+    name: tendari-redis
+    plan: free
+    ipAllowList: []  # internal-only (reachable by the api service)
+
+databases:
+  - name: tendari-db
+    plan: free
+    postgresMajorVersion: "16"
+    # The 0001 migration runs `CREATE EXTENSION vector` / `pgcrypto`; both are on
+    # Render's supported-extensions list for PG16 (incl. the free plan).

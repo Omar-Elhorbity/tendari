@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # The ingest path (M1) asserts this matches the DB column and fails loudly.
     embedding_dim: int = 1536
 
+    # --- ingestion execution ---
+    # When true, document ingestion runs in-process via a FastAPI background task
+    # instead of being dispatched to a Celery worker. Lets the app deploy without
+    # a separate worker service (e.g. Render's free tier, which has no workers).
+    inline_ingestion: bool = False
+
     # --- agent engine ---
     max_agent_iterations: int = 8
     context_token_budget: int = 12_000
