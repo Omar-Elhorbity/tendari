@@ -32,3 +32,6 @@ htmlcov/
 # Local data
 *.db
 *.sqlite3
+
+# Personal showcase / marketing notes (not part of the public repo)
+docs/SHOWCASE.md

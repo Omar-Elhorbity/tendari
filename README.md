@@ -6,7 +6,7 @@
 ![Celery](https://img.shields.io/badge/Celery-worker-37814A?logo=celery&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-idempotency-DC382D?logo=redis&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
-[![CI](https://github.com/Omar-Elhorbity/tendari/actions/workflows/ci.yml/badge.svg?branch=build/m6-observability)](https://github.com/Omar-Elhorbity/tendari/actions/workflows/ci.yml)
+[![CI](https://github.com/Omar-Elhorbity/tendari/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Omar-Elhorbity/tendari/actions/workflows/ci.yml)
 
 **An AI customer-support & operations agent for e-commerce that does four things
 well: grounded answers, real actions, a hard safety gate on money, and visible
