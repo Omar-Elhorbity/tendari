@@ -1,0 +1,92 @@
+# Render blueprint — deploys the full Tendari stack:
+#   web (FastAPI) + worker (Celery) + Postgres(pgvector) + Redis.
+#
+# Render → New → Blueprint → pick this repo. Then set the secret env vars
+# (ANTHROPIC_API_KEY, OPENAI_API_KEY, STRIPE_SECRET_KEY, SEED_API_KEY) in the
+# dashboard — they are declared `sync: false` so they are NOT stored in git.
+#
+# DATABASE_URL is injected driver-less (postgresql://); config.py normalises it
+# to postgresql+asyncpg:// automatically.
+
+services:
+  - type: web
+    name: tendari-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    # Run migrations + one-time seed ONCE per release, not per replica/boot, so
+    # scaling web replicas never races the migration. Web command is just serve.
+    preDeployCommand: "alembic upgrade head && python -m app.seed"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tendari-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: tendari-redis
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: CHAT_MODEL
+        value: claude-haiku-4-5
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: EMBEDDING_DIM
+        value: "1536"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SEED_API_KEY
+        sync: false
+      - key: SEED_WORKSPACE_NAME
+        value: Acme Outdoors
+
+  - type: worker
+    name: tendari-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    startCommand: "celery -A app.tasks.celery_app worker --loglevel=info"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tendari-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: tendari-redis
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: CHAT_MODEL
+        value: claude-haiku-4-5
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: EMBEDDING_DIM
+        value: "1536"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
+  - type: keyvalue
+    name: tendari-redis
+    plan: starter
+    ipAllowList: []  # internal-only (reachable by the api/worker services)
+
+databases:
+  - name: tendari-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+    # The 0001 migration runs `CREATE EXTENSION vector` / `pgcrypto`; both are on
+    # Render's supported-extensions list for PG16.

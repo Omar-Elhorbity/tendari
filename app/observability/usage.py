@@ -11,7 +11,8 @@ import logging
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.providers.base import Usage
 from app.config import settings
@@ -83,3 +84,76 @@ async def record_usage(
         )
         await session.commit()
     return cost
+
+
+# --------------------------------------------------------------------------- #
+# aggregation — backs GET /v1/usage (always workspace-scoped)
+# --------------------------------------------------------------------------- #
+# Total tokens = prompt + completion, summed in SQL.
+_TOKENS = UsageRecord.prompt_tokens + UsageRecord.completion_tokens
+
+
+async def aggregate_usage(session: AsyncSession, workspace_id: uuid.UUID) -> dict:
+    """Cost/token/request totals for a workspace, plus per-model and per-day rollups.
+
+    Every aggregate is filtered by ``workspace_id`` — usage is tenant-private, so
+    one workspace can never see another's spend. Empty workspace → zeros + [].
+    """
+    scope = UsageRecord.workspace_id == workspace_id
+
+    totals = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(UsageRecord.cost_usd), 0),
+                func.coalesce(func.sum(_TOKENS), 0),
+                func.count(),
+            ).where(scope)
+        )
+    ).one()
+
+    by_model = (
+        await session.execute(
+            select(
+                UsageRecord.model,
+                func.coalesce(func.sum(UsageRecord.cost_usd), 0),
+                func.coalesce(func.sum(_TOKENS), 0),
+                func.count(),
+            )
+            .where(scope)
+            .group_by(UsageRecord.model)
+            # cost desc, then model for a stable order on ties.
+            .order_by(func.sum(UsageRecord.cost_usd).desc(), UsageRecord.model.asc())
+        )
+    ).all()
+
+    # Bucket per calendar day in UTC. created_at is timestamptz; date() alone is
+    # evaluated in the session timezone, so without the UTC cast day boundaries
+    # would shift with the host's TZ. Convert to UTC wall-clock first.
+    day = func.date(func.timezone("UTC", UsageRecord.created_at))
+    by_day = (
+        await session.execute(
+            select(
+                day.label("day"),
+                func.coalesce(func.sum(UsageRecord.cost_usd), 0),
+                func.coalesce(func.sum(_TOKENS), 0),
+                func.count(),
+            )
+            .where(scope)
+            .group_by(day)
+            .order_by(day.desc())
+        )
+    ).all()
+
+    return {
+        "total_cost_usd": Decimal(str(totals[0])),
+        "total_tokens": int(totals[1]),
+        "request_count": int(totals[2]),
+        "by_model": [
+            {"model": r[0], "cost_usd": Decimal(str(r[1])), "tokens": int(r[2]), "request_count": int(r[3])}
+            for r in by_model
+        ],
+        "by_day": [
+            {"day": r[0], "cost_usd": Decimal(str(r[1])), "tokens": int(r[2]), "request_count": int(r[3])}
+            for r in by_day
+        ],
+    }
