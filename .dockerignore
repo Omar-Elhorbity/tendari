@@ -18,3 +18,11 @@ tendari_build_handoff.md
 .vscode
 .idea
 .DS_Store
+
+# Not needed inside the runtime image — keep them out of the build context
+tests
+docs
+.github
+render.yaml
+docker-compose.yml
+*.png

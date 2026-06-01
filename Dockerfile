@@ -7,16 +7,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# An editable install needs the package sources present at install time, so the
-# sources are copied BEFORE `pip install -e`. A change under app/ therefore
-# re-runs the install layer; slimming the runtime image (non-editable install,
-# drop tests/ + dev extras) is noted in the README as a deploy follow-up.
+# Editable install needs the package sources at install time, so they are copied
+# BEFORE `pip install`. The runtime image ships ONLY runtime deps (no dev extras)
+# and no tests/ — the suite runs in CI, not inside the deployed image.
 COPY pyproject.toml ./
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
-COPY tests ./tests
-RUN pip install -e ".[dev]"
+RUN pip install -e .
 
 EXPOSE 8000
 
