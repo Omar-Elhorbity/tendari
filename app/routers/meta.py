@@ -1,9 +1,4 @@
-"""Meta / observability endpoints: health and workspace identity.
-
-Tools listing and usage aggregation are added in their respective milestones
-(M6). For M0 this proves liveness and that an authed request resolves to a
-workspace.
-"""
+"""Meta / observability endpoints: health, workspace identity, tools, usage."""
 
 from __future__ import annotations
 
@@ -13,8 +8,11 @@ from fastapi import APIRouter, Response, status
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from app.auth import CurrentWorkspace
+from app.auth import CurrentWorkspace, DbSession
 from app.db import engine
+from app.observability.usage import aggregate_usage
+from app.schemas.meta import ToolInfo, UsageSummaryOut
+from app.tools import get_registry
 
 router = APIRouter(tags=["meta"])
 
@@ -44,3 +42,20 @@ async def healthz(response: Response) -> HealthResponse:
 async def whoami(workspace: CurrentWorkspace) -> WorkspaceIdentity:
     """Return the workspace resolved from the Bearer API key (auth smoke test)."""
     return WorkspaceIdentity(workspace_id=workspace.id, name=workspace.name)
+
+
+@router.get("/v1/tools", response_model=list[ToolInfo], tags=["meta"])
+async def list_tools(workspace: CurrentWorkspace) -> list[dict]:
+    """Everything the agent can do — name, description, and JSON-schema args.
+
+    The registry is global (same for every workspace); auth is still required so
+    the tool catalogue isn't exposed unauthenticated.
+    """
+    return get_registry().public_list()
+
+
+@router.get("/v1/usage", response_model=UsageSummaryOut, tags=["meta"])
+async def usage(workspace: CurrentWorkspace, session: DbSession) -> UsageSummaryOut:
+    """Workspace-scoped cost/token/request totals with per-model and per-day rollups."""
+    data = await aggregate_usage(session, workspace.id)
+    return UsageSummaryOut.model_validate(data)

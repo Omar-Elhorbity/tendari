@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.config import settings
 from app.db import engine
 from app.routers import actions, conversations, documents, meta
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -32,6 +36,10 @@ def create_app() -> FastAPI:
     app.include_router(documents.router)
     app.include_router(conversations.router)
     app.include_router(actions.router)
+
+    # Tiny static demo console at /demo (optional; Swagger is the primary surface).
+    if _STATIC_DIR.is_dir():
+        app.mount("/demo", StaticFiles(directory=_STATIC_DIR, html=True), name="demo")
 
     return app
 

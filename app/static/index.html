@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tendari — demo console</title>
+<style>
+  :root { --fg:#1c2330; --mut:#6b7686; --line:#e3e7ee; --accent:#2f6df6; --bg:#f7f8fa; }
+  * { box-sizing: border-box; }
+  body { font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         margin:0; color:var(--fg); background:var(--bg); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); background:#fff; }
+  header h1 { font-size:16px; margin:0; } header small { color:var(--mut); }
+  main { max-width:880px; margin:0 auto; padding:18px 20px 60px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input,button { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; }
+  input { background:#fff; } input[type=text]{ flex:1; min-width:160px; }
+  button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  button.ghost { background:#fff; color:var(--fg); border-color:var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); margin:0 0 10px; }
+  #log { display:flex; flex-direction:column; gap:10px; min-height:60px; }
+  .msg { padding:9px 12px; border-radius:10px; max-width:85%; white-space:pre-wrap; }
+  .me { align-self:flex-end; background:#eaf1ff; }
+  .bot { align-self:flex-start; background:#f1f3f7; }
+  .evt { align-self:flex-start; color:var(--mut); font-size:12px; font-family:ui-monospace,monospace; }
+  pre { background:#0d1117; color:#c9d1d9; padding:12px; border-radius:8px; overflow:auto; font-size:12px; }
+  .pa { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px; }
+  .pa .meta { color:var(--mut); font-size:12px; }
+  .pa button { padding:4px 10px; font-size:12px; margin-left:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tendari <small>— grounded answers, real actions, a safety gate, visible cost</small></h1>
+</header>
+<main>
+  <div class="card">
+    <div class="row">
+      <input id="base" type="text" value="" placeholder="API base (blank = same origin)" style="flex:0 0 220px" />
+      <input id="key" type="text" value="demo-key-tendari-001" placeholder="API key" style="flex:0 0 220px" />
+      <button class="ghost" onclick="newConvo()">New conversation</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Chat</h2>
+    <div id="log"></div>
+    <div class="row" style="margin-top:12px">
+      <input id="q" type="text" placeholder="Ask… e.g. What's your return window?  •  Where's order #1002?  •  Refund #1002, it arrived damaged"
+             onkeydown="if(event.key==='Enter')send()" />
+      <button id="sendBtn" onclick="send()">Send</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Pending actions (human-in-the-loop) <button class="ghost" style="float:right;padding:3px 8px" onclick="loadPending()">refresh</button></h2>
+    <div id="pending"><span class="meta" style="color:#6b7686">none loaded</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Usage <button class="ghost" style="float:right;padding:3px 8px" onclick="loadUsage()">refresh</button></h2>
+    <pre id="usage">—</pre>
+  </div>
+</main>
+
+<script>
+let convo = null;
+const $ = id => document.getElementById(id);
+const base = () => $('base').value.replace(/\/$/, '');
+const hdrs = () => ({ 'Authorization': 'Bearer ' + $('key').value, 'Content-Type': 'application/json' });
+
+function add(cls, text) {
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
+  $('log').appendChild(d); d.scrollIntoView(); return d;
+}
+
+async function newConvo() {
+  const r = await fetch(base() + '/v1/conversations', { method: 'POST', headers: hdrs(), body: '{}' });
+  if (!r.ok) { add('evt', 'create failed: ' + r.status); return null; }
+  convo = (await r.json()).id; add('evt', 'new conversation ' + convo); return convo;
+}
+
+async function send() {
+  const q = $('q').value.trim(); if (!q) return;
+  if (!convo && !(await newConvo())) return;
+  $('q').value = ''; $('sendBtn').disabled = true;
+  add('me', q);
+  const bot = add('bot', ''); let text = '';
+  try {
+    const r = await fetch(base() + '/v1/conversations/' + convo + '/messages',
+      { method: 'POST', headers: hdrs(), body: JSON.stringify({ content: q, stream: true }) });
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const frames = buf.split('\n\n'); buf = frames.pop();
+      for (const f of frames) {
+        let ev = 'message', data = '';
+        for (const line of f.split('\n')) {
+          if (line.startsWith('event:')) ev = line.slice(6).trim();
+          else if (line.startsWith('data:')) data += line.slice(5).trim();
+        }
+        let p = {}; try { p = JSON.parse(data); } catch {}  // one guarded parse per frame
+        if (ev === 'token') { text += p.text || ''; bot.textContent = text; }
+        else if (ev === 'tool_call_start') add('evt', '→ tool ' + (p.tool || ''));
+        else if (ev === 'tool_call_result') add('evt', '✓ ' + (p.tool || '') + ' ' + (p.status || ''));
+        else if (ev === 'approval_required') { add('evt', '⏸ approval required — see pending actions'); loadPending(); }
+        else if (ev === 'done') { loadUsage(); }
+      }
+    }
+    if (!text) bot.textContent = '(no text returned)';
+  } catch (e) { add('evt', 'stream error: ' + e); }
+  $('sendBtn').disabled = false;
+}
+
+async function loadPending() {
+  const box = $('pending'); box.innerHTML = '';
+  const r = await fetch(base() + '/v1/pending-actions?status=pending_approval', { headers: hdrs() });
+  const rows = r.ok ? await r.json() : [];
+  if (!rows.length) { box.innerHTML = '<span class="meta">no pending actions</span>'; return; }
+  for (const a of rows) {
+    const d = document.createElement('div'); d.className = 'pa';
+    // textContent (not innerHTML) — payload fields are model/user-controlled.
+    const name = document.createElement('b'); name.textContent = a.action_type;
+    const meta = document.createElement('span'); meta.className = 'meta';
+    const pl = a.payload || {};
+    meta.textContent = ` ${pl.order_number || ''} · ${pl.amount || ''} ${pl.currency || ''} · ${a.status}`;
+    d.append(name, meta);
+    const ok = document.createElement('button'); ok.textContent = 'approve';
+    ok.onclick = () => act(a.id, 'approve');
+    const no = document.createElement('button'); no.className = 'ghost'; no.textContent = 'reject';
+    no.onclick = () => act(a.id, 'reject');
+    d.append(ok, no); box.appendChild(d);
+  }
+}
+
+async function act(id, what) {
+  const r = await fetch(base() + '/v1/pending-actions/' + id + '/' + what, { method: 'POST', headers: hdrs() });
+  const j = await r.json().catch(() => ({}));
+  add('evt', `${what} → ${r.status} ${JSON.stringify(j)}`);
+  loadPending();
+}
+
+async function loadUsage() {
+  const r = await fetch(base() + '/v1/usage', { headers: hdrs() });
+  $('usage').textContent = r.ok ? JSON.stringify(await r.json(), null, 2) : 'error ' + r.status;
+}
+</script>
+</body>
+</html>

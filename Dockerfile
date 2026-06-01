@@ -7,8 +7,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching. The package metadata
-# (pyproject) is enough; sources are copied afterwards.
+# An editable install needs the package sources present at install time, so the
+# sources are copied BEFORE `pip install -e`. A change under app/ therefore
+# re-runs the install layer; slimming the runtime image (non-editable install,
+# drop tests/ + dev extras) is noted in the README as a deploy follow-up.
 COPY pyproject.toml ./
 COPY app ./app
 COPY alembic ./alembic

@@ -12,7 +12,7 @@ import json
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ProviderName = Literal["anthropic", "openai", "mock"]
@@ -29,6 +29,20 @@ class Settings(BaseSettings):
     # --- infra ---
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/tendari"
     redis_url: str = "redis://redis:6379/0"
+
+    @field_validator("database_url")
+    @classmethod
+    def _force_asyncpg_driver(cls, v: str) -> str:
+        """Normalise driver-less Postgres URLs to the async asyncpg driver.
+
+        Managed hosts (Render/Railway/Heroku) inject ``postgres://`` /
+        ``postgresql://`` connection strings, but this app (and Alembic) use the
+        async ``asyncpg`` driver. An explicit ``+driver`` is left untouched.
+        """
+        for prefix in ("postgresql://", "postgres://"):
+            if v.startswith(prefix):
+                return "postgresql+asyncpg://" + v[len(prefix) :]
+        return v
 
     # --- LLM provider ---
     llm_provider: ProviderName = "anthropic"
