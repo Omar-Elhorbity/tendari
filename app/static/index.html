@@ -349,7 +349,25 @@ function add(cls, text) {
 // Suggested-question chip → fills the composer and sends.
 function ask(text) { $('q').value = text; send(); }
 
+// Starting over: reject any parked refunds so the gated-refund flow can run
+// again. The over-refund ceiling counts open refunds against the order total
+// across ALL conversations, so a refund left pending in a prior conversation
+// would otherwise block a fresh one. Rejected refunds don't count.
+async function clearPending() {
+  try {
+    const r = await fetch(base() + '/v1/pending-actions?status=pending_approval', { headers: hdrs() });
+    if (!r.ok) return;
+    const rows = await r.json();
+    if (!rows.length) return;
+    await Promise.all(rows.map(a =>
+      fetch(base() + '/v1/pending-actions/' + a.id + '/reject', { method: 'POST', headers: hdrs() })
+    ));
+    add('evt', `cleared ${rows.length} pending request${rows.length > 1 ? 's' : ''} for a fresh start`);
+  } catch (e) { /* best-effort reset */ }
+}
+
 async function newConvo() {
+  await clearPending();
   const r = await fetch(base() + '/v1/conversations', { method: 'POST', headers: hdrs(), body: '{}' });
   if (!r.ok) {
     if (r.status === 401) { showNotice(AUTH_HELP); flagAuth(); add('evt', 'create failed: 401 — see the note above'); }
@@ -357,7 +375,9 @@ async function newConvo() {
     return null;
   }
   hideNotice();
-  convo = (await r.json()).id; add('evt', 'new conversation ' + convo); return convo;
+  convo = (await r.json()).id; add('evt', 'new conversation ' + convo);
+  loadPending(); loadUsage();
+  return convo;
 }
 
 async function send() {
