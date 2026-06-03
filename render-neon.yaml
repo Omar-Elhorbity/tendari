@@ -1,0 +1,83 @@
+# Render blueprint — FREE web service + EXTERNAL Neon Postgres.
+#
+# Use this variant when you've already used your one free Render Postgres on
+# another project (Render allows only one free database per account). The web
+# service stays on Render's free tier; the database lives on Neon's free tier
+# (which includes pgvector). Cost: $0.
+#
+# Differences from render-free.yaml:
+#   * NO `databases:` block — there's no Render-managed DB to create.
+#   * DATABASE_URL is a secret you set by hand (sync: false), pointing at Neon.
+#   * Everything else (worker-less inline ingestion, migrate+seed in the start
+#     command, free Redis) is identical.
+#
+# ─── Neon setup (one time) ──────────────────────────────────────────────────
+# 1. neon.tech → new project (Postgres 16). pgvector + pgcrypto are available;
+#    the 0001 migration runs `CREATE EXTENSION IF NOT EXISTS vector/pgcrypto`.
+# 2. Copy the connection string. Neon hands you something like:
+#       postgresql://user:pass@ep-xxx.REGION.aws.neon.tech/dbname?sslmode=require&channel_binding=require
+#    ⚠️ The app uses asyncpg, which does NOT understand `sslmode`/`channel_binding`.
+#    REWRITE the query string to a single `?ssl=require` (asyncpg understands it):
+#       postgresql://user:pass@ep-xxx.REGION.aws.neon.tech/dbname?ssl=require
+#    Use that rewritten URL as DATABASE_URL below. (The app auto-rewrites the
+#    `postgresql://` scheme to `postgresql+asyncpg://`; leave the scheme as-is.)
+#
+# ─── Render setup ───────────────────────────────────────────────────────────
+# Render → New → Blueprint → pick this repo → choose render-neon.yaml, then set
+# the secret env vars (sync: false) in the dashboard — including DATABASE_URL.
+#
+# Free-tier caveats:
+#   * Render web service spins down after ~15 min idle; next request cold-starts
+#     (re-runs migrate+seed, both idempotent) and is slow.
+#   * Neon compute auto-suspends when idle and wakes on first connection (adds a
+#     short delay to that first cold request).
+#   * Free Redis is small/non-persistent — fine; it only holds TTL'd, best-effort
+#     email-idempotency keys, and the app falls back to in-process without it.
+
+services:
+  - type: web
+    name: tendari-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # No preDeployCommand on free tier — fold migrate + seed into the start
+    # command. Both are idempotent, so re-running on every cold start is safe.
+    dockerCommand: "alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /healthz
+    envVars:
+      # Run ingestion in-process — there is no worker service on this blueprint.
+      - key: INLINE_INGESTION
+        value: "true"
+      # Set in the dashboard to the REWRITTEN Neon URL (…?ssl=require). Secret.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: tendari-redis
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: CHAT_MODEL
+        value: claude-haiku-4-5
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: EMBEDDING_DIM
+        value: "1536"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SEED_API_KEY
+        sync: false
+      - key: SEED_WORKSPACE_NAME
+        value: Acme Outdoors
+
+  - type: keyvalue
+    name: tendari-redis
+    plan: free
+    ipAllowList: []  # internal-only (reachable by the api service)
