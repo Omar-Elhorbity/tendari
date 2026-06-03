@@ -336,10 +336,14 @@ async function testConnection() {
 // Clear the empty-state placeholder the first time a real message lands.
 function clearEmpty() { const e = $('log').querySelector('.empty'); if (e) e.remove(); }
 
+// Scroll only the chat log to its bottom — never scrollIntoView, which would
+// scroll the whole page (jarring when a suggestion chip is clicked).
+function scrollLog() { const l = $('log'); l.scrollTop = l.scrollHeight; }
+
 function add(cls, text) {
   clearEmpty();
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
-  $('log').appendChild(d); d.scrollIntoView(); return d;
+  $('log').appendChild(d); scrollLog(); return d;
 }
 
 // Suggested-question chip → fills the composer and sends.
@@ -378,7 +382,7 @@ async function send() {
           else if (line.startsWith('data:')) data += line.slice(5).trim();
         }
         let p = {}; try { p = JSON.parse(data); } catch {}  // one guarded parse per frame
-        if (ev === 'token') { text += p.text || ''; bot.textContent = text; }
+        if (ev === 'token') { text += p.text || ''; bot.textContent = text; scrollLog(); }
         else if (ev === 'tool_call_start') add('evt', '→ tool ' + (p.tool || ''));
         else if (ev === 'tool_call_result') add('evt', '✓ ' + (p.tool || '') + ' ' + (p.status || ''));
         else if (ev === 'approval_required') { add('evt', '⏸ approval required — see pending actions'); loadPending(); }

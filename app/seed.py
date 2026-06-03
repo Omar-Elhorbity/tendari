@@ -11,12 +11,12 @@ import asyncio
 import logging
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, settings
 from app.db import SessionLocal
-from app.models import Chunk, Customer, Document, Order, Workspace
+from app.models import Chunk, Customer, Document, Order, PendingAction, Workspace
 from app.rag.chunking import chunk_text
 from app.rag.embeddings import embed_texts
 from app.security import hash_api_key
@@ -205,12 +205,27 @@ async def _seed_documents(session: AsyncSession, workspace: Workspace) -> None:
         document.status = "ready"
 
 
+async def _reset_pending_actions(session: AsyncSession, workspace: Workspace) -> None:
+    """Clear the demo workspace's pending/processed refund requests.
+
+    The refund tool correctly caps total refunds at the order total — counting
+    open AND processed refunds. On a shared demo that means the FIRST refund of
+    order #1002 permanently blocks every later one ("would exceed the order
+    total"). Resetting this transactional demo state on each (re)seed keeps the
+    gated-refund flow repeatable. Scoped to the seeded workspace only.
+    """
+    await session.execute(
+        delete(PendingAction).where(PendingAction.workspace_id == workspace.id)
+    )
+
+
 async def seed() -> None:
     async with SessionLocal() as session:
         workspace = await _get_or_create_workspace(session)
         customers = await _seed_customers(session, workspace)
         await _seed_orders(session, workspace, customers)
         await _seed_documents(session, workspace)
+        await _reset_pending_actions(session, workspace)
         await session.commit()
 
         logger.info("Seed complete.")

@@ -74,6 +74,27 @@ async def test_mock_routes_general_question_to_search() -> None:
     assert resp.tool_calls[0].name == "search_help_docs"
 
 
+async def test_mock_surfaces_tool_error_reason() -> None:
+    """A failed tool (e.g. the over-refund gate) reports the real reason, not the
+    generic 'couldn't find in our help docs' fallback."""
+    import json
+
+    err = "This refund would exceed the order total: 89.50 of 89.50 is already refunded."
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": "x",
+        "name": "initiate_refund",
+        "content": json.dumps({"status": "error", "error": err}),
+    }
+    resp = await MockProvider().chat(
+        system="s",
+        messages=[{"role": "user", "content": "Refund #1002"}, tool_msg],
+        tools=_TOOLS,
+    )
+    assert err in resp.text
+    assert "help docs" not in resp.text
+
+
 def test_write_tool_arg_validation() -> None:
     with pytest.raises(ValidationError):
         CreateTicketArgs(subject="")  # subject required

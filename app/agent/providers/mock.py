@@ -152,10 +152,30 @@ class MockProvider:
                 return f"Based on our help docs: {snippet} (Source: {top.get('doc_title', 'a help doc')})"
             if data.get("found") is False:
                 return data.get("message") or "I couldn't find that."
+        # No successful tool result — if a tool errored, say WHY (honest), rather
+        # than implying a help-doc miss. This surfaces e.g. the over-refund gate.
+        errors = self._tool_errors(messages)
+        if errors:
+            return f"I tried to do that, but it couldn't be completed: {errors[-1]}"
         return (
             "I couldn't find that in our help docs. If you'd like, I can escalate "
             "this to a human teammate."
         )
+
+    @staticmethod
+    def _tool_errors(messages: list[dict]) -> list[str]:
+        """Error strings from this turn's tool results (status == 'error')."""
+        out: list[str] = []
+        for m in messages:
+            if m.get("role") != "tool":
+                continue
+            try:
+                payload = json.loads(m.get("content") or "{}")
+            except json.JSONDecodeError:
+                continue
+            if payload.get("status") == "error" and payload.get("error"):
+                out.append(str(payload["error"]))
+        return out
 
     @staticmethod
     def _order_answer(order: dict) -> str:
