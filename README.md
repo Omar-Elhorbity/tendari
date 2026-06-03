@@ -22,15 +22,29 @@ wrapper: a domain-agnostic agent loop, multi-tenant isolation, a human-in-the-lo
 gate on money, RAG over help docs, swappable LLM providers, and per-call cost
 accounting.*
 
+### ▶ Live demo — **<https://tendari-api-1psr.onrender.com/>**
+
+The landing page, the interactive **`/demo/`** console (run the free mock with
+**zero keys**, or **bring your own** Anthropic/OpenAI key), and the Swagger API at
+**`/docs`**. Hosted on Render's free tier — the first request after idle cold-starts.
+
 <p align="center">
-  <img src="docs/demo.png" width="540"
-       alt="Tendari demo console — a grounded answer, a live order lookup, and a refund held for human approval, with token cost ticking up in the usage panel." />
+  <a href="https://tendari-api-1psr.onrender.com/">
+    <img src="docs/landing.png" width="760"
+         alt="Tendari landing page — 'Grounded answers. Real actions. No runaway refunds.' with a sample cited answer and live cost." />
+  </a>
+</p>
+
+<p align="center">
+  <img src="docs/demo.png" width="760"
+       alt="Tendari demo console — a cited answer from the help docs, a live order lookup, and an $88.50 refund parked for human approval, with token cost accruing in the usage panel." />
 </p>
 
 > The built-in **`/demo`** console, end to end: a cited answer from the store's
 > help docs → a live `lookup_order` → a refund **parked for human approval** —
-> with token cost accruing in the usage panel. Runs on the mock provider with zero
-> API keys.
+> with token cost accruing in the usage panel. Pick the free mock (zero keys) or
+> **bring your own key**; a built-in **connection test** validates the key before
+> you start.
 
 ---
 
@@ -47,8 +61,10 @@ accounting.*
   process exactly once via a Stripe idempotency key.
 - **Provider-swappable, config-driven** — Anthropic · OpenAI · a mock provider
   behind one interface; model ids and token prices live in config, never code.
+  The public demo even lets a visitor **bring their own key** (validated with a
+  real provider call before use), so hosting it costs nothing.
 - **Runs offline with zero keys** — no keys ⇒ mock LLM + deterministic
-  embeddings, so the full demo *and* the 90-test suite run on nothing but Docker.
+  embeddings, so the full demo *and* the 96-test suite run on nothing but Docker.
 - **Cost is a first-class, durable signal** — every model call writes a usage row
   on its own committed transaction (it survives a request rollback); `GET
   /v1/usage` rolls it up by model and by day.
@@ -110,9 +126,10 @@ docker compose up --build     # api + worker + postgres(pgvector) + redis
 
 On boot the `api` service applies migrations, seeds a demo workspace, and serves:
 
+- **Landing page:** http://localhost:8000/ (product overview)
 - **Swagger UI:** http://localhost:8000/docs
 - **Health:** http://localhost:8000/healthz → `{"status":"ok"}`
-- **Demo page:** http://localhost:8000/demo/ (tiny built-in chat console)
+- **Demo console:** http://localhost:8000/demo/ (chat + bring-your-own-key + live cost panel)
 
 The seed creates workspace **Acme Outdoors**, 2 customers, 5 orders (incl.
 **#1002** with a Stripe test payment intent), and 2 help docs. The demo API key
@@ -125,6 +142,24 @@ is `demo-key-tendari-001` — send it as `Authorization: Bearer demo-key-tendari
 
 > **Beyond local:** every process is containerized, so the same four-service
 > stack runs anywhere Docker does — no code changes between laptop and cloud.
+
+---
+
+## Deploy
+
+A live instance runs on Render's free tier:
+**<https://tendari-api-1psr.onrender.com/>**. Blueprints are included:
+
+| File | Target |
+|---|---|
+| `render-free.yaml` | Free Render web + Redis + Render Postgres (one-click Blueprint) |
+| `render-neon.yaml` | Free Render web + an external Neon Postgres (when your one free Render DB is used elsewhere) |
+| `railway.toml` | Railway equivalent |
+
+The free-tier blueprints run **worker-less**: document ingestion runs in-process
+(`INLINE_INGESTION=true`) instead of a Celery worker, and migrate + seed run on
+start (both idempotent). With no provider keys the agent uses the free mock, so a
+no-key deploy is **$0** — and visitors can still drive it with their own key.
 
 ---
 
@@ -150,7 +185,8 @@ Run live against Swagger (or the `/demo` page) with the demo key:
 | Method & path | Purpose |
 |---|---|
 | `GET /healthz` | Liveness + DB check (public) |
-| `GET /v1/me` | Workspace resolved from the API key |
+| `GET /v1/me` | Workspace resolved from the API key (auth smoke test) |
+| `GET /v1/provider/check` | Validate a bring-your-own-key LLM key with a real provider call |
 | `GET /v1/tools` | Tool catalogue: `{name, description, parameters_schema}` |
 | `GET /v1/usage` | `{total_cost_usd, total_tokens, request_count, by_model[], by_day[]}` |
 | `POST /v1/documents` · `GET` · `DELETE` | Ingest / list / delete help docs (RAG) |
@@ -162,6 +198,11 @@ Run live against Swagger (or the `/demo` page) with the demo key:
 
 **SSE events** (`stream:true`): `token`, `tool_call_start`, `tool_call_result`,
 `approval_required`, `done` (carries `usage`).
+
+**Bring your own key (optional):** send `X-LLM-Provider` + `X-LLM-Api-Key` headers
+on the messages endpoint to run that turn on your own Anthropic/OpenAI key; omit
+them to use the server's configured provider (or the free mock). The key is used
+transiently and never logged or stored.
 
 Every `/v1/*` route is workspace-scoped by the Bearer key; there is no
 cross-workspace data access.
@@ -198,7 +239,8 @@ usage `GROUP BY`) is verified live against Postgres.
 
 ```
 app/
-  main.py            FastAPI app, router mounting, lifespan, /demo static
+  main.py            FastAPI app, router mounting, lifespan, landing + /demo + /static
+  static/            landing.html · index.html (demo console) · tokens.css
   config.py          pydantic-settings — all env vars
   db.py              async engine + session dependency
   auth.py            Bearer key → workspace (the trust boundary)
