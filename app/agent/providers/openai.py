@@ -13,11 +13,13 @@ from app.config import settings
 class OpenAIProvider:
     name = "openai"
 
-    def __init__(self) -> None:
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self._model = settings.chat_model
+        # api_key/model override the configured defaults so a demo visitor can
+        # supply their own key per request (BYOK) without the server paying.
+        self._client = AsyncOpenAI(api_key=api_key or settings.openai_api_key)
+        self._model = model or settings.chat_model
 
     @staticmethod
     def _to_messages(system: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

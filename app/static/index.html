@@ -39,9 +39,23 @@
   <div class="card">
     <div class="row">
       <input id="base" type="text" value="" placeholder="API base (blank = same origin)" style="flex:0 0 220px" />
-      <input id="key" type="text" value="demo-key-tendari-001" placeholder="API key" style="flex:0 0 220px" />
+      <input id="key" type="text" value="demo-key-tendari-001" placeholder="Workspace API key" style="flex:0 0 220px" />
       <button class="ghost" onclick="newConvo()">New conversation</button>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>AI model — bring your own key (optional)</h2>
+    <div class="row">
+      <select id="provider" onchange="onProviderChange()" style="flex:0 0 220px">
+        <option value="mock">Free demo — no key needed</option>
+        <option value="anthropic">Anthropic — Claude (your key)</option>
+        <option value="openai">OpenAI — GPT (your key)</option>
+      </select>
+      <input id="llmkey" type="password" placeholder="Paste your provider API key" oninput="saveLlm()" style="flex:1; display:none" />
+      <button id="forgetKey" class="ghost" onclick="forgetLlm()" style="display:none">Forget key</button>
+    </div>
+    <div id="modeNote" class="meta" style="color:var(--mut); font-size:12px; margin-top:8px"></div>
   </div>
 
   <div class="card">
@@ -69,7 +83,65 @@
 let convo = null;
 const $ = id => document.getElementById(id);
 const base = () => $('base').value.replace(/\/$/, '');
-const hdrs = () => ({ 'Authorization': 'Bearer ' + $('key').value, 'Content-Type': 'application/json' });
+
+// ---- BYOK (bring your own key) -------------------------------------------
+// The provider key lives ONLY in this browser (localStorage) and is sent to
+// this server as a per-request header so it can relay the call. Never stored
+// server-side. Selecting "Free demo" sends no key — the agent uses the mock.
+function llmProvider() { return $('provider').value; }
+function llmKey() { return ($('llmkey').value || '').trim(); }
+
+function onProviderChange() {
+  const real = llmProvider() !== 'mock';
+  $('llmkey').style.display = real ? '' : 'none';
+  $('forgetKey').style.display = real && llmKey() ? '' : 'none';
+  localStorage.setItem('tendari.provider', llmProvider());
+  renderMode();
+}
+
+function saveLlm() {
+  localStorage.setItem('tendari.llmkey', llmKey());
+  $('forgetKey').style.display = llmKey() ? '' : 'none';
+  renderMode();
+}
+
+function forgetLlm() {
+  $('llmkey').value = '';
+  localStorage.removeItem('tendari.llmkey');
+  saveLlm();
+}
+
+function renderMode() {
+  const note = $('modeNote');
+  if (llmProvider() === 'mock') {
+    note.textContent = '🟢 Free demo mode — runs on a built-in mock provider. $0, no key, deterministic answers. Great for a first look.';
+  } else if (!llmKey()) {
+    const name = llmProvider() === 'anthropic' ? 'Anthropic' : 'OpenAI';
+    note.textContent = `🔑 Paste your ${name} API key above to drive the agent with a real model. Falls back to the free mock until you do.`;
+  } else {
+    const name = llmProvider() === 'anthropic' ? 'Claude (Anthropic)' : 'GPT (OpenAI)';
+    note.textContent = `✅ Using YOUR key — answers come from ${name}, billed to your account. The key stays in this browser and is only relayed to call the provider; it is never stored or logged server-side.`;
+  }
+}
+
+function restoreLlm() {
+  $('provider').value = localStorage.getItem('tendari.provider') || 'mock';
+  $('llmkey').value = localStorage.getItem('tendari.llmkey') || '';
+  onProviderChange();
+}
+
+const hdrs = () => {
+  const h = { 'Authorization': 'Bearer ' + $('key').value, 'Content-Type': 'application/json' };
+  // Only attach BYOK headers when a real provider + key are set; otherwise the
+  // server uses its default (free mock) provider.
+  if (llmProvider() !== 'mock' && llmKey()) {
+    h['X-LLM-Provider'] = llmProvider();
+    h['X-LLM-Api-Key'] = llmKey();
+  }
+  return h;
+};
+
+restoreLlm();
 
 function add(cls, text) {
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;

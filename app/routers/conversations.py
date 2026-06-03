@@ -12,14 +12,15 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.engine import run_agent
-from app.agent.providers import get_provider
+from app.agent.providers import Provider, get_provider_for
 from app.auth import CurrentWorkspace, DbSession
 from app.db import SessionLocal
 from app.models import Conversation, Customer, Message, Workspace
@@ -89,6 +90,7 @@ async def _agent_event_stream(
     workspace: Workspace,
     conversation: Conversation,
     content: str,
+    provider: Provider,
 ) -> AsyncIterator[dict]:
     """Run the agent in a background task and relay its emitted events as SSE.
 
@@ -113,7 +115,7 @@ async def _agent_event_stream(
                         conversation=conversation,
                         user_text=content,
                         registry=get_registry(),
-                        provider=get_provider(),
+                        provider=provider,
                         stream=True,
                         emit=emit,
                     )
@@ -153,19 +155,27 @@ async def post_message(
     body: MessageRequest,
     workspace: CurrentWorkspace,
     session: DbSession,
+    x_llm_provider: Annotated[str | None, Header()] = None,
+    x_llm_api_key: Annotated[str | None, Header()] = None,
 ):
     """Send a message to the agent.
 
     ``stream=false`` → JSON MessageResponse. ``stream=true`` → text/event-stream
     with ``token`` / ``tool_call_start`` / ``tool_call_result`` / ``done`` events.
+
+    BYOK: a caller may pass ``X-LLM-Provider`` + ``X-LLM-Api-Key`` headers to drive
+    the agent with their own key (the public demo uses this). The key is used only
+    to build a transient provider for this request — never logged or persisted.
+    Omit them to use the server default (which degrades to the free mock).
     """
     conversation = await _get_owned_conversation(conversation_id, workspace, session)
+    provider = get_provider_for(x_llm_provider, x_llm_api_key)
 
     if body.stream:
         # Streaming runs on its own session; the request session only did the
         # ownership read above, so its post-stream commit is a no-op.
         return EventSourceResponse(
-            _agent_event_stream(workspace, conversation, body.content)
+            _agent_event_stream(workspace, conversation, body.content, provider)
         )
 
     result = await run_agent(
@@ -175,7 +185,7 @@ async def post_message(
         conversation=conversation,
         user_text=body.content,
         registry=get_registry(),
-        provider=get_provider(),
+        provider=provider,
         stream=False,
     )
 

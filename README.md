@@ -48,7 +48,7 @@ accounting.*
 - **Provider-swappable, config-driven** — Anthropic · OpenAI · a mock provider
   behind one interface; model ids and token prices live in config, never code.
 - **Runs offline with zero keys** — no keys ⇒ mock LLM + deterministic
-  embeddings, so the full demo *and* the 85-test suite run on nothing but Docker.
+  embeddings, so the full demo *and* the 90-test suite run on nothing but Docker.
 - **Cost is a first-class, durable signal** — every model call writes a usage row
   on its own committed transaction (it survives a request rollback); `GET
   /v1/usage` rolls it up by model and by day.
