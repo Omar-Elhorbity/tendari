@@ -18,6 +18,7 @@
   --color-on-accent: oklch(99% 0 0);
   --color-focus:    oklch(54% 0.16 256);
   --color-good:     oklch(52% 0.10 155);       /* approved / success, used sparingly */
+  --color-danger:   oklch(55% 0.17 25);        /* auth / connection failure */
 
   /* ── type ─────────────────────────────────────────────────────────────── */
   --font-display: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;

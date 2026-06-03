@@ -101,6 +101,10 @@ code { font-family: var(--font-mono); font-size: 0.92em; background: var(--color
 .modeNote { margin-top: var(--space-sm); font-size: var(--text-xs); line-height: var(--leading-snug); color: var(--color-ink-soft); }
 .forget { margin-top: var(--space-sm); background: none; border: none; color: var(--color-ink-mute); font: inherit; font-size: var(--text-xs); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; }
 .forget:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.testStatus { margin: var(--space-sm) 0 0; font-size: var(--text-xs); line-height: var(--leading-snug); }
+.testStatus.pending { color: var(--color-ink-mute); }
+.testStatus.ok { color: var(--color-good); }
+.testStatus.err { color: var(--color-danger); }
 
 /* pending actions */
 #pending .meta { color: var(--color-ink-mute); font-size: var(--text-sm); }
@@ -177,6 +181,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; background: var(--color
         </div>
         <button id="forgetKey" class="forget" onclick="forgetLlm()" style="display:none">Forget key</button>
         <p id="modeNote" class="modeNote"></p>
+        <button id="testBtn" class="btn btn--ghost btn--block" onclick="testConnection()">Test connection</button>
+        <p id="testStatus" class="testStatus" hidden></p>
       </section>
 
       <section class="card" aria-label="Pending actions">
@@ -283,6 +289,39 @@ function showNotice(html) { const n = $('notice'); n.innerHTML = html; n.hidden 
 function hideNotice() { $('notice').hidden = true; }
 function flagAuth() { $('key').closest('.field').classList.add('field--alert'); $('key').focus(); $('key').select(); }
 function clearKeyAlert() { $('key').closest('.field').classList.remove('field--alert'); hideNotice(); }
+
+// ---- connection test -----------------------------------------------------
+// Hits GET /v1/me — the server's auth smoke test. Confirms the API is
+// reachable AND the workspace key is valid before the visitor sends anything.
+// (The provider key, if any, can't be pre-validated without a billable call.)
+function setTest(cls, html) { const s = $('testStatus'); s.className = 'testStatus ' + cls; s.innerHTML = html; s.hidden = false; }
+
+async function testConnection() {
+  const btn = $('testBtn'); btn.disabled = true;
+  setTest('pending', 'Testing connection…');
+  try {
+    const r = await fetch(base() + '/v1/me', { headers: hdrs() });
+    if (r.ok) {
+      const me = await r.json();
+      const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      const name = esc((me && me.name) ? me.name : 'workspace');
+      let model;
+      if (llmProvider() === 'mock') model = 'Free mock — no key, $0.';
+      else if (!llmKey()) model = `No ${llmProvider()} key yet → still using the free mock.`;
+      else model = `Your ${llmProvider()} key is set; it’s used on send (not pre-billed by this test).`;
+      setTest('ok', `✓ Connected — workspace “${name}”.<br>${model}`);
+      clearKeyAlert();
+    } else if (r.status === 401) {
+      setTest('err', '✗ 401 — the workspace key doesn’t match this server. See the note above.');
+      showNotice(AUTH_HELP); flagAuth();
+    } else {
+      setTest('err', `✗ Server responded ${r.status}.`);
+    }
+  } catch (e) {
+    setTest('err', `✗ Couldn’t reach the API${base() ? ' at ' + base() : ''}. Check the API base in Connection.`);
+  }
+  btn.disabled = false;
+}
 
 // Clear the empty-state placeholder the first time a real message lands.
 function clearEmpty() { const e = $('log').querySelector('.empty'); if (e) e.remove(); }
