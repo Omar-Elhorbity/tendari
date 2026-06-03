@@ -89,6 +89,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 .composer { display: flex; gap: var(--space-sm); }
 .composer input { flex: 1; min-width: 0; }
 
+/* helper text + auth notice */
+.hint { font-size: var(--text-xs); line-height: var(--leading-snug); color: var(--color-ink-mute); margin: 0 0 var(--space-md); }
+.hint b { color: var(--color-ink-soft); font-weight: 500; }
+code { font-family: var(--font-mono); font-size: 0.92em; background: var(--color-paper); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-sm); padding: 0.05rem 0.32rem; }
+.notice { margin-bottom: var(--space-lg); padding: var(--space-md) var(--space-lg); border-radius: var(--radius-md); border: var(--rule-hair) solid color-mix(in oklch, var(--color-accent) 45%, var(--color-rule)); background: var(--color-accent-wash); color: var(--color-ink); font-size: var(--text-sm); line-height: var(--leading-snug); }
+.notice b { font-weight: 600; }
+.field--alert input { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-wash); }
+
 /* mode note + select row */
 .modeNote { margin-top: var(--space-sm); font-size: var(--text-xs); line-height: var(--leading-snug); color: var(--color-ink-soft); }
 .forget { margin-top: var(--space-sm); background: none; border: none; color: var(--color-ink-mute); font: inherit; font-size: var(--text-xs); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; }
@@ -126,6 +134,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
     <h1>Try the agent</h1>
     <p>Ask a question, watch it cite a source, look up a real order, and — for anything involving money — wait for your one-click approval. Cost is metered on the right.</p>
   </div>
+
+  <div id="notice" class="notice" role="alert" hidden></div>
 
   <div class="console">
     <!-- main chat -->
@@ -181,13 +191,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 
       <section class="card" aria-label="Connection">
         <h2>Connection</h2>
-        <div class="field">
-          <label for="base">API base</label>
-          <input id="base" type="text" value="" placeholder="blank = same origin" />
-        </div>
+        <p class="hint">Advanced. The agent's API authenticates each call with a <b>workspace key</b>. It must match the <code>SEED_API_KEY</code> the server was deployed with — the default below only works if the server uses the built-in demo key.</p>
         <div class="field">
           <label for="key">Workspace API key</label>
-          <input id="key" type="text" value="demo-key-tendari-001" />
+          <input id="key" type="text" value="demo-key-tendari-001" oninput="clearKeyAlert()" />
+        </div>
+        <div class="field">
+          <label for="base">API base <span style="color:var(--color-ink-mute)">(blank = this server)</span></label>
+          <input id="base" type="text" value="" placeholder="https://… or blank" />
         </div>
       </section>
     </aside>
@@ -258,6 +269,21 @@ const hdrs = () => {
 
 restoreLlm();
 
+// ---- auth notice ---------------------------------------------------------
+// Every API call carries the workspace key (Authorization: Bearer …). A 401
+// means that key doesn't match this server's SEED_API_KEY — surface a clear,
+// actionable message instead of a raw status code.
+const AUTH_HELP =
+  '<b>Authentication failed (401).</b> The <b>Workspace API key</b> in the ' +
+  'Connection panel doesn’t match this server. Paste the value the server ' +
+  'was deployed with as <code>SEED_API_KEY</code> — or set ' +
+  '<code>SEED_API_KEY</code> to <code>demo-key-tendari-001</code> to use the ' +
+  'built-in default.';
+function showNotice(html) { const n = $('notice'); n.innerHTML = html; n.hidden = false; n.scrollIntoView({ block: 'nearest' }); }
+function hideNotice() { $('notice').hidden = true; }
+function flagAuth() { $('key').closest('.field').classList.add('field--alert'); $('key').focus(); $('key').select(); }
+function clearKeyAlert() { $('key').closest('.field').classList.remove('field--alert'); hideNotice(); }
+
 // Clear the empty-state placeholder the first time a real message lands.
 function clearEmpty() { const e = $('log').querySelector('.empty'); if (e) e.remove(); }
 
@@ -272,7 +298,12 @@ function ask(text) { $('q').value = text; send(); }
 
 async function newConvo() {
   const r = await fetch(base() + '/v1/conversations', { method: 'POST', headers: hdrs(), body: '{}' });
-  if (!r.ok) { add('evt', 'create failed: ' + r.status); return null; }
+  if (!r.ok) {
+    if (r.status === 401) { showNotice(AUTH_HELP); flagAuth(); add('evt', 'create failed: 401 — see the note above'); }
+    else add('evt', 'create failed: ' + r.status);
+    return null;
+  }
+  hideNotice();
   convo = (await r.json()).id; add('evt', 'new conversation ' + convo); return convo;
 }
 
@@ -340,7 +371,9 @@ async function act(id, what) {
 
 async function loadUsage() {
   const r = await fetch(base() + '/v1/usage', { headers: hdrs() });
-  $('usage').textContent = r.ok ? JSON.stringify(await r.json(), null, 2) : 'error ' + r.status;
+  if (r.ok) { $('usage').textContent = JSON.stringify(await r.json(), null, 2); hideNotice(); }
+  else if (r.status === 401) { $('usage').textContent = '401 — workspace key doesn’t match this server (see the note above).'; showNotice(AUTH_HELP); flagAuth(); }
+  else { $('usage').textContent = 'error ' + r.status; }
 }
 </script>
 </body>
