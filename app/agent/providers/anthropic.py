@@ -20,6 +20,11 @@ class AnthropicProvider:
         self._client = AsyncAnthropic(api_key=api_key or settings.anthropic_api_key)
         self._model = model or settings.chat_model
 
+    async def validate(self) -> None:
+        """Make a real, token-free authenticated call so a bad key fails loudly.
+        models.list is a GET that costs nothing but rejects an invalid key (401)."""
+        await self._client.models.list(limit=1)
+
     @staticmethod
     def _to_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []

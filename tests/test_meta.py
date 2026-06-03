@@ -131,3 +131,90 @@ async def test_usage_empty_workspace_is_zeroed(client: AsyncClient) -> None:
     assert Decimal(str(body["total_cost_usd"])) == Decimal("0")
     assert body["request_count"] == 0
     assert body["by_model"] == [] and body["by_day"] == []
+
+
+# --------------------------------------------------------------------------- #
+# GET /v1/provider/check — real BYOK-key validation (provider stubbed)
+# --------------------------------------------------------------------------- #
+import app.routers.meta as meta_mod  # noqa: E402
+
+
+class _StubProvider:
+    """Stands in for a real provider so validate() needs no network."""
+
+    def __init__(self, exc: Exception | None = None) -> None:
+        self._exc = exc
+
+    async def validate(self) -> None:
+        if self._exc is not None:
+            raise self._exc
+
+
+class _HttpErr(Exception):
+    def __init__(self, code: int) -> None:
+        self.status_code = code
+        super().__init__(f"http {code}")
+
+
+async def test_provider_check_requires_auth(client: AsyncClient, session_returns: Callable) -> None:
+    session_returns(None)
+    assert (await client.get("/v1/provider/check")).status_code == 401
+
+
+async def test_provider_check_mock_when_no_byok_key(
+    client: AsyncClient, session_returns: Callable
+) -> None:
+    session_returns(_ws())
+    body = (await client.get("/v1/provider/check", headers={"Authorization": "Bearer k"})).json()
+    assert body["ok"] is True and body["mode"] == "mock"
+
+
+async def test_provider_check_unknown_provider_is_400(
+    client: AsyncClient, session_returns: Callable
+) -> None:
+    session_returns(_ws())
+    resp = await client.get(
+        "/v1/provider/check",
+        headers={"Authorization": "Bearer k", "X-LLM-Provider": "groq", "X-LLM-Api-Key": "x"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_provider_check_rejects_bad_key(
+    client: AsyncClient, session_returns: Callable, monkeypatch
+) -> None:
+    session_returns(_ws())
+    # A real authenticated call would 401 on a bogus key — the bug this fixes.
+    monkeypatch.setattr(meta_mod, "get_provider_for", lambda n, k: _StubProvider(_HttpErr(401)))
+    resp = await client.get(
+        "/v1/provider/check",
+        headers={"Authorization": "Bearer k", "X-LLM-Provider": "anthropic", "X-LLM-Api-Key": "bogus"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False and body["mode"] == "byok" and body["provider"] == "anthropic"
+
+
+async def test_provider_check_accepts_valid_key(
+    client: AsyncClient, session_returns: Callable, monkeypatch
+) -> None:
+    session_returns(_ws())
+    monkeypatch.setattr(meta_mod, "get_provider_for", lambda n, k: _StubProvider())
+    resp = await client.get(
+        "/v1/provider/check",
+        headers={"Authorization": "Bearer k", "X-LLM-Provider": "openai", "X-LLM-Api-Key": "sk-valid"},
+    )
+    assert resp.json()["ok"] is True
+
+
+async def test_provider_check_rate_limited_is_still_valid(
+    client: AsyncClient, session_returns: Callable, monkeypatch
+) -> None:
+    session_returns(_ws())
+    # 429 means authenticated-but-throttled → the key itself is valid.
+    monkeypatch.setattr(meta_mod, "get_provider_for", lambda n, k: _StubProvider(_HttpErr(429)))
+    resp = await client.get(
+        "/v1/provider/check",
+        headers={"Authorization": "Bearer k", "X-LLM-Provider": "anthropic", "X-LLM-Api-Key": "k"},
+    )
+    assert resp.json()["ok"] is True

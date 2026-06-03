@@ -64,3 +64,8 @@ class Provider(ABC):
         emits ``token`` events as text arrives; it must still return the full
         ``LLMResponse`` at the end."""
         raise NotImplementedError
+
+    async def validate(self) -> None:
+        """Make a lightweight authenticated call to confirm the key + endpoint
+        work, raising on failure. Default is a no-op; real providers override."""
+        return None

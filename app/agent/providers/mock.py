@@ -35,6 +35,10 @@ def _estimate_tokens(text: str) -> int:
 class MockProvider:
     name = "mock"
 
+    async def validate(self) -> None:
+        """The mock needs no external key — always reachable."""
+        return None
+
     def _usage(self, system: str, messages: list[dict], completion: str) -> Usage:
         prompt = system + "".join(str(m.get("content") or "") for m in messages)
         return Usage(
